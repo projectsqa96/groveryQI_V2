@@ -57,9 +57,6 @@ interface AppContextType {
   selectedReceiptForModal: string | null;
   setSelectedReceiptForModal: (url: string | null) => void;
 
-  editingExpense: Expense | null;
-  setEditingExpense: (expense: Expense | null) => void;
-
   toasts: ToastMessage[];
   addToast: (message: Omit<ToastMessage, 'id'>) => void;
   removeToast: (id: string) => void;
@@ -150,7 +147,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
   const [selectedProductForModal, setSelectedProductForModal] = useState<Product | null>(null);
   const [selectedReceiptForModal, setSelectedReceiptForModal] = useState<string | null>(null);
-  const [editingExpense, setEditingExpense] = useState<Expense | null>(null);
 
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
@@ -843,8 +839,6 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         setSelectedProductForModal,
         selectedReceiptForModal,
         setSelectedReceiptForModal,
-        editingExpense,
-        setEditingExpense,
         toasts,
         addToast,
         removeToast,
