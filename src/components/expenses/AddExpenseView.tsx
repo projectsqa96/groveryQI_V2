@@ -1,0 +1,575 @@
+import React, { useState } from 'react';
+import { useApp } from '../../context/AppContext';
+import { ExpenseItem, Attachment, PaymentMethod, PlatformType } from '../../types';
+import { Plus, Trash2, Upload, FileText, Check, ArrowLeft, Image as ImageIcon } from 'lucide-react';
+
+export const AddExpenseView: React.FC = () => {
+  const { 
+    stores, platforms, products, categories, user, 
+    addExpense, updateExpense, editingExpense, setEditingExpense,
+    setActiveTab, addToast 
+  } = useApp();
+
+  const isEditMode = !!editingExpense;
+
+  const [storeId, setStoreId] = useState(editingExpense?.storeId || stores[0]?.id || '');
+  const [platform, setPlatform] = useState<PlatformType>(editingExpense?.platform || 'Offline');
+  const [date, setDate] = useState(editingExpense?.date || new Date().toISOString().slice(0, 10));
+  const [time, setTime] = useState(editingExpense?.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editingExpense?.paymentMethod || 'UPI');
+  const [notes, setNotes] = useState(editingExpense?.notes || '');
+  const [tagsInput, setTagsInput] = useState((editingExpense?.tags || []).join(', '));
+  const [deliveryCharge, setDeliveryCharge] = useState<number>(editingExpense?.deliveryCharge || 0);
+  const [tax, setTax] = useState<number>(editingExpense?.tax || 0);
+  const [overallDiscount, setOverallDiscount] = useState<number>(editingExpense?.discount || 0);
+  const [receipts, setReceipts] = useState<Attachment[]>(editingExpense?.receipts || []);
+
+  // Dynamic Product Items
+  const [items, setItems] = useState<ExpenseItem[]>(
+    editingExpense?.items && editingExpense.items.length > 0
+      ? editingExpense.items
+      : [
+          {
+            id: `item-${Date.now()}-1`,
+            productId: products[0]?.id || 'prod-custom-1',
+            productName: products[0]?.name || '',
+            categoryId: products[0]?.categoryId || categories[0]?.id || 'cat-veg',
+            brand: products[0]?.brand || 'Generic',
+            quantity: 1,
+            unit: products[0]?.defaultUnit || 'kg',
+            unitPrice: 3.50,
+            discount: 0,
+            totalPrice: 3.50,
+            notes: ''
+          }
+        ]
+  );
+
+  // Product Row Change Handler
+  const handleItemChange = (index: number, field: keyof ExpenseItem, value: any) => {
+    setItems((prev) => {
+      const updated = [...prev];
+      const item = { ...updated[index], [field]: value };
+
+      // If user selected an existing product from dropdown
+      if (field === 'productId') {
+        const prod = products.find((p) => p.id === value);
+        if (prod) {
+          item.productName = prod.name;
+          item.brand = prod.brand;
+          item.categoryId = prod.categoryId;
+          item.unit = prod.defaultUnit;
+        }
+      }
+
+      // Auto recalculate total price for this row
+      const qty = parseFloat(item.quantity as any) || 0;
+      const uPrice = parseFloat(item.unitPrice as any) || 0;
+      const disc = parseFloat(item.discount as any) || 0;
+      item.totalPrice = Math.max(0, qty * uPrice - disc);
+
+      updated[index] = item;
+      return updated;
+    });
+  };
+
+  const handleAddRow = () => {
+    const defaultProd = products[items.length % products.length] || products[0];
+    setItems((prev) => [
+      ...prev,
+      {
+        id: `item-${Date.now()}-${prev.length + 1}`,
+        productId: defaultProd?.id || `prod-${Date.now()}`,
+        productName: defaultProd?.name || '',
+        categoryId: defaultProd?.categoryId || categories[0]?.id || 'cat-veg',
+        brand: defaultProd?.brand || 'Generic',
+        quantity: 1,
+        unit: defaultProd?.defaultUnit || 'pcs',
+        unitPrice: 2.50,
+        discount: 0,
+        totalPrice: 2.50,
+        notes: ''
+      }
+    ]);
+  };
+
+  const handleRemoveRow = (index: number) => {
+    if (items.length === 1) {
+      addToast({ title: 'Minimum 1 Item', description: 'Purchase must contain at least one item', type: 'error' });
+      return;
+    }
+    setItems((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  // Subtotal & Grand Total Auto Calculation
+  const subtotal = items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
+  const grandTotal = Math.max(0, subtotal - overallDiscount + deliveryCharge + tax);
+
+  // Simulated File Upload
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files) return;
+
+    Array.from(files).forEach((file: File) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const newAtt: Attachment = {
+          id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+          name: file.name,
+          url: event.target?.result as string,
+          type: file.type.includes('pdf') ? 'pdf' : 'image',
+          size: file.size
+        };
+        setReceipts((prev) => [...prev, newAtt]);
+      };
+      reader.readAsDataURL(file);
+    });
+  };
+
+  const handleCancel = () => {
+    setEditingExpense(null);
+    setActiveTab('expenses');
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+
+    if (items.length === 0) {
+      addToast({ title: 'Items Required', description: 'Please add at least one item', type: 'error' });
+      return;
+    }
+
+    const selectedStoreObj = stores.find((s) => s.id === storeId) || stores[0];
+    const parsedTags = tagsInput
+      .split(',')
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
+
+    const payload = {
+      storeId: selectedStoreObj ? selectedStoreObj.id : 'store-local',
+      storeName: selectedStoreObj ? selectedStoreObj.name : 'Local Market',
+      platform,
+      date,
+      time,
+      paymentMethod,
+      notes,
+      tags: parsedTags.length > 0 ? parsedTags : ['Grocery'],
+      receipts,
+      items,
+      subtotal,
+      discount: overallDiscount,
+      deliveryCharge,
+      tax,
+      grandTotal
+    };
+
+    if (isEditMode && editingExpense) {
+      updateExpense(editingExpense.id, payload);
+    } else {
+      addExpense(payload);
+    }
+
+    setEditingExpense(null);
+    setActiveTab('expenses');
+  };
+
+  return (
+    <div className="max-w-5xl mx-auto space-y-6 pb-16">
+      {/* Header Bar */}
+      <div className="flex items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <button
+            onClick={handleCancel}
+            className="p-2 rounded-xl border border-slate-200 dark:border-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800"
+          >
+            <ArrowLeft className="w-4 h-4" />
+          </button>
+          <div>
+            <h2 className="text-lg font-bold text-slate-900 dark:text-slate-100">
+              {isEditMode ? 'Edit Purchase / Expense' : 'Add New Purchase / Expense'}
+            </h2>
+            <p className="text-xs text-slate-500 dark:text-slate-400">
+              {isEditMode ? 'Update the itemized grocery invoice details' : 'Record itemized grocery invoice details'}
+            </p>
+          </div>
+        </div>
+
+        <button
+          onClick={handleSubmit}
+          className="flex items-center gap-1.5 px-5 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-xs sm:text-sm shadow-md transition-all active:scale-95"
+        >
+          <Check className="w-4 h-4" />
+          <span>{isEditMode ? 'Save Changes' : 'Save Purchase'}</span>
+        </button>
+      </div>
+
+      <form onSubmit={handleSubmit} className="space-y-6">
+        {/* Section 1: Purchase Metadata Card */}
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+            Purchase Header Details
+          </h3>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {/* Store Selection */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Store / Merchant *
+              </label>
+              <select
+                value={storeId}
+                onChange={(e) => setStoreId(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-emerald-500"
+              >
+                {stores.map((s) => (
+                  <option key={s.id} value={s.id}>
+                    {s.name} ({s.type})
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Platform Selection */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Platform *
+              </label>
+              <select
+                value={platform}
+                onChange={(e) => setPlatform(e.target.value as PlatformType)}
+                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="Offline">Offline (In-Store)</option>
+                <option value="Instamart">Instamart</option>
+                <option value="Blinkit">Blinkit</option>
+                <option value="BigBasket">BigBasket</option>
+                <option value="Amazon Fresh">Amazon Fresh</option>
+                <option value="Swiggy">Swiggy</option>
+                <option value="Zomato">Zomato</option>
+                <option value="Flipkart Grocery">Flipkart Grocery</option>
+                <option value="Others">Others</option>
+              </select>
+            </div>
+
+            {/* Date */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Purchase Date *
+              </label>
+              <input
+                type="date"
+                value={date}
+                onChange={(e) => setDate(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-emerald-500"
+                required
+              />
+            </div>
+
+            {/* Payment Method */}
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Payment Method *
+              </label>
+              <select
+                value={paymentMethod}
+                onChange={(e) => setPaymentMethod(e.target.value as PaymentMethod)}
+                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium focus:ring-2 focus:ring-emerald-500"
+              >
+                <option value="UPI">UPI</option>
+                <option value="Credit Card">Credit Card</option>
+                <option value="Debit Card">Debit Card</option>
+                <option value="Cash">Cash</option>
+                <option value="Net Banking">Net Banking</option>
+                <option value="Wallet">Wallet</option>
+              </select>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-2">
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Tags (comma separated)
+              </label>
+              <input
+                type="text"
+                placeholder="Weekly Staples, Organic, Offer Deal"
+                value={tagsInput}
+                onChange={(e) => setTagsInput(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 dark:text-slate-300 mb-1">
+                Notes
+              </label>
+              <input
+                type="text"
+                placeholder="e.g. Bought with discount coupon #SAVE20"
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                className="w-full px-3 py-2 text-xs rounded-xl bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Section 2: Dynamic Products Entry Table */}
+        <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-4">
+          <div className="flex items-center justify-between">
+            <div>
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Product Items ({items.length})
+              </h3>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Specify items purchased and individual pricing</p>
+            </div>
+
+            <button
+              type="button"
+              onClick={handleAddRow}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-emerald-100 dark:bg-emerald-950/80 text-emerald-700 dark:text-emerald-300 font-semibold text-xs hover:bg-emerald-200 dark:hover:bg-emerald-900 transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>Add Item Row</span>
+            </button>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs min-w-[700px]">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-800 text-slate-400 uppercase text-[10px] font-semibold">
+                  <th className="pb-2 px-2 w-1/3">Product & Brand</th>
+                  <th className="pb-2 px-2 w-28">Category</th>
+                  <th className="pb-2 px-2 w-20">Qty</th>
+                  <th className="pb-2 px-2 w-20">Unit</th>
+                  <th className="pb-2 px-2 w-24">Unit Price ({user.currency})</th>
+                  <th className="pb-2 px-2 w-20">Discount</th>
+                  <th className="pb-2 px-2 w-28 text-right">Total Price</th>
+                  <th className="pb-2 px-2 w-10 text-center"></th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+                {items.map((item, idx) => (
+                  <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
+                    {/* Product Selection / Name */}
+                    <td className="py-2.5 px-2">
+                      <select
+                        value={item.productId}
+                        onChange={(e) => handleItemChange(idx, 'productId', e.target.value)}
+                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 mb-1"
+                      >
+                        {products.map((p) => (
+                          <option key={p.id} value={p.id}>
+                            {p.name} ({p.brand})
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="text"
+                        placeholder="Product Name override"
+                        value={item.productName}
+                        onChange={(e) => handleItemChange(idx, 'productName', e.target.value)}
+                        className="w-full px-2 py-1 text-[11px] rounded bg-transparent border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                      />
+                    </td>
+
+                    {/* Category */}
+                    <td className="py-2.5 px-2">
+                      <select
+                        value={item.categoryId}
+                        onChange={(e) => handleItemChange(idx, 'categoryId', e.target.value)}
+                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+                      >
+                        {categories.map((c) => (
+                          <option key={c.id} value={c.id}>
+                            {c.name}
+                          </option>
+                        ))}
+                      </select>
+                    </td>
+
+                    {/* Quantity */}
+                    <td className="py-2.5 px-2">
+                      <input
+                        type="number"
+                        step="0.1"
+                        min="0.1"
+                        value={item.quantity}
+                        onChange={(e) => handleItemChange(idx, 'quantity', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium"
+                      />
+                    </td>
+
+                    {/* Unit */}
+                    <td className="py-2.5 px-2">
+                      <input
+                        type="text"
+                        value={item.unit}
+                        onChange={(e) => handleItemChange(idx, 'unit', e.target.value)}
+                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+                      />
+                    </td>
+
+                    {/* Unit Price */}
+                    <td className="py-2.5 px-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={item.unitPrice}
+                        onChange={(e) => handleItemChange(idx, 'unitPrice', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium"
+                      />
+                    </td>
+
+                    {/* Item Discount */}
+                    <td className="py-2.5 px-2">
+                      <input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={item.discount}
+                        onChange={(e) => handleItemChange(idx, 'discount', parseFloat(e.target.value) || 0)}
+                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
+                      />
+                    </td>
+
+                    {/* Total Price */}
+                    <td className="py-2.5 px-2 text-right font-bold text-slate-900 dark:text-slate-100">
+                      {user.currency}{item.totalPrice.toFixed(2)}
+                    </td>
+
+                    {/* Delete Row */}
+                    <td className="py-2.5 px-2 text-center">
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveRow(idx)}
+                        className="p-1 text-slate-400 hover:text-rose-500 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Section 3: Receipt Upload & Summary Box */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Upload Receipts Box */}
+          <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-xs space-y-3">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              Receipt Attachments
+            </h3>
+
+            <div className="border-2 border-dashed border-slate-200 dark:border-slate-700 rounded-xl p-4 text-center hover:bg-slate-50 dark:hover:bg-slate-800/50 transition-colors">
+              <Upload className="w-6 h-6 text-slate-400 mx-auto mb-2" />
+              <p className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                Click or drag invoice images / PDF receipts
+              </p>
+              <p className="text-[10px] text-slate-400 mt-0.5">Supports PNG, JPG, PDF up to 10MB</p>
+              <input
+                type="file"
+                multiple
+                accept="image/*,application/pdf"
+                onChange={handleFileUpload}
+                className="hidden"
+                id="receipt-file-upload"
+              />
+              <label
+                htmlFor="receipt-file-upload"
+                className="mt-3 inline-block px-3 py-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-xs font-medium cursor-pointer"
+              >
+                Browse Files
+              </label>
+            </div>
+
+            {receipts.length > 0 && (
+              <div className="space-y-1.5 pt-2">
+                {receipts.map((r, idx) => (
+                  <div key={r.id} className="flex items-center justify-between p-2 rounded-lg bg-slate-50 dark:bg-slate-800 text-xs">
+                    <div className="flex items-center gap-2 truncate">
+                      {r.type === 'pdf' ? <FileText className="w-4 h-4 text-rose-500" /> : <ImageIcon className="w-4 h-4 text-blue-500" />}
+                      <span className="truncate font-medium">{r.name}</span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setReceipts((prev) => prev.filter((_, i) => i !== idx))}
+                      className="text-rose-500 hover:text-rose-700 text-[10px]"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Grand Totals Calculation Card */}
+          <div className="bg-slate-900 text-white p-5 rounded-2xl shadow-xl space-y-3">
+            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+              Calculation Breakdown
+            </h3>
+
+            <div className="space-y-2 text-xs">
+              <div className="flex justify-between text-slate-300">
+                <span>Items Subtotal:</span>
+                <span className="font-semibold">{user.currency}{subtotal.toFixed(2)}</span>
+              </div>
+
+              <div className="flex justify-between items-center text-slate-300">
+                <span>Overall Discount:</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={overallDiscount}
+                  onChange={(e) => setOverallDiscount(parseFloat(e.target.value) || 0)}
+                  className="w-24 px-2 py-1 text-xs rounded bg-slate-800 border border-slate-700 text-right text-emerald-400 font-semibold"
+                />
+              </div>
+
+              <div className="flex justify-between items-center text-slate-300">
+                <span>Delivery Charge:</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={deliveryCharge}
+                  onChange={(e) => setDeliveryCharge(parseFloat(e.target.value) || 0)}
+                  className="w-24 px-2 py-1 text-xs rounded bg-slate-800 border border-slate-700 text-right font-semibold"
+                />
+              </div>
+
+              <div className="flex justify-between items-center text-slate-300">
+                <span>Tax / GST:</span>
+                <input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={tax}
+                  onChange={(e) => setTax(parseFloat(e.target.value) || 0)}
+                  className="w-24 px-2 py-1 text-xs rounded bg-slate-800 border border-slate-700 text-right font-semibold"
+                />
+              </div>
+
+              <div className="border-t border-slate-800 pt-3 flex justify-between items-center text-sm font-bold text-white">
+                <span className="text-emerald-400">Grand Total:</span>
+                <span className="text-2xl text-emerald-400">{user.currency}{grandTotal.toFixed(2)}</span>
+              </div>
+            </div>
+
+            <button
+              type="submit"
+              className="w-full mt-4 py-3 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold text-sm transition-all shadow-lg shadow-emerald-500/20 active:scale-98"
+            >
+              {isEditMode ? 'Save Changes' : 'Confirm & Save Expense'}
+            </button>
+          </div>
+        </div>
+      </form>
+    </div>
+  );
+};
