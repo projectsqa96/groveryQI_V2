@@ -19,9 +19,9 @@ export const AddExpenseView: React.FC = () => {
   const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editingExpense?.paymentMethod || 'UPI');
   const [notes, setNotes] = useState(editingExpense?.notes || '');
   const [tagsInput, setTagsInput] = useState((editingExpense?.tags || []).join(', '));
-  const [deliveryCharge, setDeliveryCharge] = useState<number>(editingExpense?.deliveryCharge || 0);
-  const [tax, setTax] = useState<number>(editingExpense?.tax || 0);
-  const [overallDiscount, setOverallDiscount] = useState<number>(editingExpense?.discount || 0);
+  const [deliveryChargeInput, setDeliveryChargeInput] = useState<string>(String(editingExpense?.deliveryCharge ?? 0));
+  const [taxInput, setTaxInput] = useState<string>(String(editingExpense?.tax ?? 0));
+  const [overallDiscountInput, setOverallDiscountInput] = useState<string>(String(editingExpense?.discount ?? 0));
   const [receipts, setReceipts] = useState<Attachment[]>(editingExpense?.receipts || []);
 
   // Dynamic Product Items
@@ -102,6 +102,9 @@ export const AddExpenseView: React.FC = () => {
   };
 
   // Subtotal & Grand Total Auto Calculation
+  const deliveryCharge = parseFloat(deliveryChargeInput) || 0;
+  const tax = parseFloat(taxInput) || 0;
+  const overallDiscount = parseFloat(overallDiscountInput) || 0;
   const subtotal = items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
   const grandTotal = Math.max(0, subtotal - overallDiscount + deliveryCharge + tax);
 
@@ -145,6 +148,25 @@ export const AddExpenseView: React.FC = () => {
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
 
+    // Finalize numeric fields in case a row was still mid-edit (not blurred)
+    // when Save was clicked.
+    const finalizedItems = items.map((item) => {
+      const quantity = parseFloat(item.quantity as any) || 0;
+      const unitPrice = parseFloat(item.unitPrice as any) || 0;
+      const discount = parseFloat(item.discount as any) || 0;
+      return {
+        ...item,
+        quantity,
+        unitPrice,
+        discount,
+        totalPrice: Math.max(0, quantity * unitPrice - discount)
+      };
+    });
+    const finalizedSubtotal = finalizedItems.reduce((sum, item) => sum + item.totalPrice, 0);
+    const finalizedDiscount = parseFloat(overallDiscountInput) || 0;
+    const finalizedDelivery = parseFloat(deliveryChargeInput) || 0;
+    const finalizedTax = parseFloat(taxInput) || 0;
+
     const payload = {
       storeId: selectedStoreObj ? selectedStoreObj.id : 'store-local',
       storeName: selectedStoreObj ? selectedStoreObj.name : 'Local Market',
@@ -155,12 +177,12 @@ export const AddExpenseView: React.FC = () => {
       notes,
       tags: parsedTags.length > 0 ? parsedTags : ['Grocery'],
       receipts,
-      items,
-      subtotal,
-      discount: overallDiscount,
-      deliveryCharge,
-      tax,
-      grandTotal
+      items: finalizedItems,
+      subtotal: finalizedSubtotal,
+      discount: finalizedDiscount,
+      deliveryCharge: finalizedDelivery,
+      tax: finalizedTax,
+      grandTotal: Math.max(0, finalizedSubtotal - finalizedDiscount + finalizedDelivery + finalizedTax)
     };
 
     if (isEditMode && editingExpense) {
@@ -391,11 +413,14 @@ export const AddExpenseView: React.FC = () => {
                     {/* Quantity */}
                     <td className="py-2.5 px-2">
                       <input
-                        type="number"
-                        step="0.1"
-                        min="0.1"
+                        type="text"
+                        inputMode="decimal"
                         value={item.quantity}
-                        onChange={(e) => handleItemChange(idx, 'quantity', parseFloat(e.target.value) || 0)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (/^\d*\.?\d*$/.test(v)) handleItemChange(idx, 'quantity', v);
+                        }}
+                        onBlur={() => handleItemChange(idx, 'quantity', parseFloat(item.quantity as any) || 0)}
                         className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium"
                       />
                     </td>
@@ -413,11 +438,15 @@ export const AddExpenseView: React.FC = () => {
                     {/* Unit Price */}
                     <td className="py-2.5 px-2">
                       <input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
                         value={item.unitPrice}
-                        onChange={(e) => handleItemChange(idx, 'unitPrice', parseFloat(e.target.value) || 0)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (/^\d*\.?\d*$/.test(v)) handleItemChange(idx, 'unitPrice', v);
+                        }}
+                        onBlur={() => handleItemChange(idx, 'unitPrice', parseFloat(item.unitPrice as any) || 0)}
                         className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium"
                       />
                     </td>
@@ -425,11 +454,14 @@ export const AddExpenseView: React.FC = () => {
                     {/* Item Discount */}
                     <td className="py-2.5 px-2">
                       <input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
+                        inputMode="decimal"
                         value={item.discount}
-                        onChange={(e) => handleItemChange(idx, 'discount', parseFloat(e.target.value) || 0)}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          if (/^\d*\.?\d*$/.test(v)) handleItemChange(idx, 'discount', v);
+                        }}
+                        onBlur={() => handleItemChange(idx, 'discount', parseFloat(item.discount as any) || 0)}
                         className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100"
                       />
                     </td>
@@ -522,11 +554,14 @@ export const AddExpenseView: React.FC = () => {
               <div className="flex justify-between items-center text-slate-300">
                 <span>Overall Discount:</span>
                 <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={overallDiscount}
-                  onChange={(e) => setOverallDiscount(parseFloat(e.target.value) || 0)}
+                  type="text"
+                  inputMode="decimal"
+                  value={overallDiscountInput}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (/^\d*\.?\d*$/.test(v)) setOverallDiscountInput(v);
+                  }}
+                  onBlur={() => setOverallDiscountInput(String(parseFloat(overallDiscountInput) || 0))}
                   className="w-24 px-2 py-1 text-xs rounded bg-slate-800 border border-slate-700 text-right text-emerald-400 font-semibold"
                 />
               </div>
@@ -534,11 +569,14 @@ export const AddExpenseView: React.FC = () => {
               <div className="flex justify-between items-center text-slate-300">
                 <span>Delivery Charge:</span>
                 <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={deliveryCharge}
-                  onChange={(e) => setDeliveryCharge(parseFloat(e.target.value) || 0)}
+                  type="text"
+                  inputMode="decimal"
+                  value={deliveryChargeInput}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (/^\d*\.?\d*$/.test(v)) setDeliveryChargeInput(v);
+                  }}
+                  onBlur={() => setDeliveryChargeInput(String(parseFloat(deliveryChargeInput) || 0))}
                   className="w-24 px-2 py-1 text-xs rounded bg-slate-800 border border-slate-700 text-right font-semibold"
                 />
               </div>
@@ -546,11 +584,14 @@ export const AddExpenseView: React.FC = () => {
               <div className="flex justify-between items-center text-slate-300">
                 <span>Tax / GST:</span>
                 <input
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={tax}
-                  onChange={(e) => setTax(parseFloat(e.target.value) || 0)}
+                  type="text"
+                  inputMode="decimal"
+                  value={taxInput}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    if (/^\d*\.?\d*$/.test(v)) setTaxInput(v);
+                  }}
+                  onBlur={() => setTaxInput(String(parseFloat(taxInput) || 0))}
                   className="w-24 px-2 py-1 text-xs rounded bg-slate-800 border border-slate-700 text-right font-semibold"
                 />
               </div>
