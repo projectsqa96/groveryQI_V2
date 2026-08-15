@@ -14,6 +14,9 @@ export const AddExpenseView: React.FC = () => {
   const isEditMode = !!editingExpense;
   const [isScanning, setIsScanning] = useState(false);
 
+  // Sentinel value for the "+ Add New Product" dropdown option
+  const NEW_PRODUCT_VALUE = '__new__';
+
   const [storeId, setStoreId] = useState(editingExpense?.storeId || stores[0]?.id || '');
   const [platform, setPlatform] = useState<PlatformType>(editingExpense?.platform || 'Offline');
   const [date, setDate] = useState(editingExpense?.date || new Date().toISOString().slice(0, 10));
@@ -55,12 +58,21 @@ export const AddExpenseView: React.FC = () => {
 
       // If user selected an existing product from dropdown
       if (field === 'productId') {
-        const prod = products.find((p) => p.id === value);
-        if (prod) {
-          item.productName = prod.name;
-          item.brand = prod.brand;
-          item.categoryId = prod.categoryId;
-          item.unit = prod.defaultUnit;
+        if (value === NEW_PRODUCT_VALUE) {
+          // Switching to a brand-new product/brand: give it a guaranteed-unique
+          // id so it never collides with (or overwrites) an existing catalog
+          // entry, and clear the name/brand fields for fresh typing.
+          item.productId = `prod-new-${Date.now()}-${index}`;
+          item.productName = '';
+          item.brand = '';
+        } else {
+          const prod = products.find((p) => p.id === value);
+          if (prod) {
+            item.productName = prod.name;
+            item.brand = prod.brand;
+            item.categoryId = prod.categoryId;
+            item.unit = prod.defaultUnit;
+          }
         }
       }
 
@@ -237,6 +249,19 @@ export const AddExpenseView: React.FC = () => {
 
     if (items.length === 0) {
       addToast({ title: 'Items Required', description: 'Please add at least one item', type: 'error' });
+      return;
+    }
+
+    const blankNewProduct = items.some((item) => {
+      const isNewProduct = !products.some((p) => p.id === item.productId);
+      return isNewProduct && !item.productName.trim();
+    });
+    if (blankNewProduct) {
+      addToast({
+        title: 'Product Name Required',
+        description: 'One of your new products is missing a name — fill it in or pick an existing product instead.',
+        type: 'error'
+      });
       return;
     }
 
@@ -503,15 +528,20 @@ export const AddExpenseView: React.FC = () => {
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
-                {items.map((item, idx) => (
+                {items.map((item, idx) => {
+                  const isNewProduct = !products.some((p) => p.id === item.productId);
+                  return (
                   <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
                     {/* Product Selection / Name */}
                     <td className="py-2.5 px-2">
                       <select
-                        value={item.productId}
+                        value={isNewProduct ? NEW_PRODUCT_VALUE : item.productId}
                         onChange={(e) => handleItemChange(idx, 'productId', e.target.value)}
-                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 mb-1"
+                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 mb-1 font-medium"
                       >
+                        <option value={NEW_PRODUCT_VALUE} className="font-bold text-emerald-600">
+                          + Add New Product / Brand
+                        </option>
                         {products.map((p) => (
                           <option key={p.id} value={p.id}>
                             {p.name} ({p.brand})
@@ -520,17 +550,26 @@ export const AddExpenseView: React.FC = () => {
                       </select>
                       <input
                         type="text"
-                        placeholder="Product Name override"
+                        required={isNewProduct}
+                        placeholder={isNewProduct ? 'New product name *' : 'Product Name override'}
                         value={item.productName}
                         onChange={(e) => handleItemChange(idx, 'productName', e.target.value)}
-                        className="w-full px-2 py-1 text-[11px] rounded bg-transparent border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 mb-1"
+                        className={`w-full px-2 py-1 text-[11px] rounded bg-transparent border mb-1 ${
+                          isNewProduct
+                            ? 'border-emerald-400 dark:border-emerald-600 text-slate-900 dark:text-slate-100'
+                            : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                        }`}
                       />
                       <input
                         type="text"
-                        placeholder="Brand (e.g. Generic, Amul, Tata)"
+                        placeholder={isNewProduct ? 'New brand (e.g. Generic, Amul)' : 'Brand (e.g. Generic, Amul, Tata)'}
                         value={item.brand}
                         onChange={(e) => handleItemChange(idx, 'brand', e.target.value)}
-                        className="w-full px-2 py-1 text-[11px] rounded bg-transparent border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
+                        className={`w-full px-2 py-1 text-[11px] rounded bg-transparent border ${
+                          isNewProduct
+                            ? 'border-emerald-400 dark:border-emerald-600 text-slate-900 dark:text-slate-100'
+                            : 'border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300'
+                        }`}
                       />
                     </td>
 
