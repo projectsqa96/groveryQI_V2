@@ -1,8 +1,11 @@
 import { GoogleGenAI } from '@google/genai';
 
-// Model used for receipt scanning. Kept as a single constant so it's a
-// one-line change if this model name is ever retired.
-const RECEIPT_MODEL = 'gemini-2.5-flash';
+// Model used for receipt scanning. Uses Google's "-latest" alias so this
+// automatically tracks their current stable Flash model instead of pointing
+// at a specific version that gets retired over time (as gemini-2.5-flash was).
+// FALLBACK_MODEL is tried if the alias isn't available on a given API key.
+const RECEIPT_MODEL = 'gemini-flash-latest';
+const FALLBACK_MODEL = 'gemini-3.6-flash';
 
 export const getGeminiConfig = () => {
   const metaEnv = (import.meta as unknown as { env?: Record<string, string> }).env || {};
@@ -95,24 +98,34 @@ export const scanReceiptImage = async (
   const client = getClient();
   if (!client) return null;
 
-  try {
-    const response = await client.models.generateContent({
-      model: RECEIPT_MODEL,
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { inlineData: { mimeType, data: base64Data } },
-            { text: PROMPT }
-          ]
-        }
-      ],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: RECEIPT_SCHEMA
-      }
-    });
+  const contents = [
+    {
+      role: 'user',
+      parts: [
+        { inlineData: { mimeType, data: base64Data } },
+        { text: PROMPT }
+      ]
+    }
+  ];
+  const config = {
+    responseMimeType: 'application/json',
+    responseSchema: RECEIPT_SCHEMA
+  };
 
+  let response;
+  try {
+    response = await client.models.generateContent({ model: RECEIPT_MODEL, contents, config });
+  } catch (primaryErr) {
+    console.warn(`Gemini model "${RECEIPT_MODEL}" failed, retrying with "${FALLBACK_MODEL}":`, primaryErr);
+    try {
+      response = await client.models.generateContent({ model: FALLBACK_MODEL, contents, config });
+    } catch (fallbackErr) {
+      console.error('Gemini receipt scan failed on both models:', fallbackErr);
+      return null;
+    }
+  }
+
+  try {
     const text = response.text;
     if (!text) return null;
 
