@@ -121,6 +121,7 @@ export const AddExpenseView: React.FC = () => {
   const overallDiscount = parseFloat(overallDiscountInput) || 0;
   const subtotal = items.reduce((sum, item) => sum + (item.totalPrice || 0), 0);
   const grandTotal = Math.max(0, subtotal - overallDiscount + deliveryCharge + tax);
+  const newProductCount = items.filter((item) => !products.some((p) => p.id === item.productId)).length;
 
   // Simulated File Upload
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -226,9 +227,13 @@ export const AddExpenseView: React.FC = () => {
       });
       setItems(newItems);
 
+      const unmatchedCount = newItems.filter((i) => !products.some((p) => p.id === i.productId)).length;
       addToast({
         title: 'Receipt Scanned!',
-        description: `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — please review before saving.`,
+        description:
+          unmatchedCount > 0
+            ? `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — ${unmatchedCount} aren't in your Product Master yet. Review the green-highlighted row(s) below and they'll be added automatically when you save.`
+            : `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — please review before saving.`,
         type: 'success'
       });
     } catch (err) {
@@ -512,6 +517,16 @@ export const AddExpenseView: React.FC = () => {
               <span>Add Item Row</span>
             </button>
           </div>
+
+          {newProductCount > 0 && (
+            <div className="flex items-start gap-2 p-3 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800 text-xs text-emerald-800 dark:text-emerald-300">
+              <Sparkles className="w-4 h-4 shrink-0 mt-0.5" />
+              <span>
+                <strong>{newProductCount} product{newProductCount > 1 ? 's' : ''}</strong> below {newProductCount > 1 ? "aren't" : "isn't"} in your Product Master yet (highlighted in green).
+                Fill in the name and brand — they'll be added to your catalog automatically when you save this purchase.
+              </span>
+            </div>
+          )}
 
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs min-w-[700px]">
