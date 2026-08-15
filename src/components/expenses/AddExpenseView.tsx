@@ -523,6 +523,13 @@ export const AddExpenseView: React.FC = () => {
                         placeholder="Product Name override"
                         value={item.productName}
                         onChange={(e) => handleItemChange(idx, 'productName', e.target.value)}
+                        className="w-full px-2 py-1 text-[11px] rounded bg-transparent border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 mb-1"
+                      />
+                      <input
+                        type="text"
+                        placeholder="Brand (e.g. Generic, Amul, Tata)"
+                        value={item.brand}
+                        onChange={(e) => handleItemChange(idx, 'brand', e.target.value)}
                         className="w-full px-2 py-1 text-[11px] rounded bg-transparent border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300"
                       />
                     </td>

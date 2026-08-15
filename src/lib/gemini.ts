@@ -55,7 +55,11 @@ const RECEIPT_SCHEMA = {
         type: 'object',
         properties: {
           name: { type: 'string' },
-          brand: { type: 'string' },
+          brand: {
+            type: 'string',
+            description:
+              "The brand, if identifiable from the item text (e.g. 'AMUL BUTTER 500G' -> brand 'Amul', name 'Butter 500G'). Empty string if no brand is discernible — do not guess a brand that isn't implied by the text."
+          },
           quantity: { type: 'number' },
           unit: { type: 'string', description: "e.g. kg, g, L, ml, pcs, pack" },
           unitPrice: { type: 'number' },
@@ -82,7 +86,10 @@ Rules:
 - If a numeric field isn't visible or legible, use your best reasonable estimate
   rather than leaving it blank; never invent items that aren't on the receipt.
 - "unit" should be a short shopping unit like kg, g, L, ml, pcs, or pack.
-- If the receipt has no explicit brand for an item, use an empty string.
+- If the item text on the receipt includes a recognizable brand (e.g. "AMUL
+  BUTTER 500G", "TATA SALT 1KG"), split it into brand ("Amul", "Tata") and a
+  clean product name ("Butter 500G", "Salt 1kg"). If no brand is discernible
+  from the text, leave brand as an empty string — do not invent one.
 - date must be in YYYY-MM-DD format. If the year is missing, assume the current year.
 - Respond with the extracted data only, matching the given schema exactly.`;
 
