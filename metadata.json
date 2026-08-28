@@ -1,0 +1,6 @@
+{
+  "name": "Personal Grocery & Expense Tracker",
+  "description": "A comprehensive grocery and expense tracking application with analytics, product price comparison, shopping lists, store & platform management, reports, and receipt storage.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
