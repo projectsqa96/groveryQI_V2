@@ -1,7 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ExpenseItem, Attachment, PaymentMethod, PlatformType } from '../../types';
-import { scanReceiptImage, getGeminiConfig } from '../../lib/gemini';
 import { Plus, Trash2, Upload, FileText, Check, ArrowLeft, Image as ImageIcon, Sparkles, Loader2 } from 'lucide-react';
 
 // Mobile browsers frequently kill a backgrounded tab (e.g. while the camera
@@ -63,11 +62,11 @@ export const AddExpenseView: React.FC = () => {
   const { 
     stores, platforms, products, categories, user, 
     addExpense, updateExpense, editingExpense, setEditingExpense,
-    setActiveTab, addToast 
+    setActiveTab, addToast,
+    isScanningReceipt, scanResult, scanReceiptForNewExpense, clearScanResult
   } = useApp();
 
   const isEditMode = !!editingExpense;
-  const [isScanning, setIsScanning] = useState(false);
 
   // Sentinel value for the "+ Add New Product" dropdown option
   const NEW_PRODUCT_VALUE = '__new__';
@@ -95,6 +94,25 @@ export const AddExpenseView: React.FC = () => {
       ? editingExpense.items
       : draft?.items || []
   );
+
+  // Applies a completed scan (owned by AppContext, so it survives the user
+  // switching tabs mid-scan — see the comment on scanReceiptForNewExpense)
+  // into this form's local state. Fires whenever a new result appears,
+  // whether that's while this view stayed mounted the whole time, or on
+  // first mount because the scan finished while the user was on another tab.
+  const lastAppliedScanToken = useRef<number>(0);
+  useEffect(() => {
+    if (isEditMode || !scanResult || scanResult.token === lastAppliedScanToken.current) return;
+    lastAppliedScanToken.current = scanResult.token;
+
+    if (scanResult.matchedStoreId) setStoreId(scanResult.matchedStoreId);
+    if (scanResult.date) setDate(scanResult.date);
+    setDeliveryChargeInput(scanResult.deliveryChargeInput);
+    setTaxInput(scanResult.taxInput);
+    setOverallDiscountInput(scanResult.overallDiscountInput);
+    setItems(scanResult.items);
+    setReceipts((prev) => [...prev, scanResult.receiptAttachment]);
+  }, [scanResult, isEditMode]);
 
   // Let the user know their in-progress purchase was recovered, rather than
   // silently restoring it — otherwise it's easy to assume the app just
@@ -242,108 +260,19 @@ export const AddExpenseView: React.FC = () => {
     });
   };
 
-  // AI Receipt Scanning via Gemini
-  const handleScanReceipt = async (e: React.ChangeEvent<HTMLInputElement>) => {
+  // AI Receipt Scanning via Gemini — the actual work lives in AppContext
+  // (scanReceiptForNewExpense) so it isn't lost if the user switches tabs
+  // before it finishes; this just kicks it off.
+  const handleScanReceipt = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // allow re-selecting the same file again later
     if (!file) return;
-
-    if (!getGeminiConfig().isConfigured) {
-      addToast({
-        title: 'AI Scanning Not Configured',
-        description: 'Set VITE_GEMINI_API_KEY in your environment to enable this.',
-        type: 'error'
-      });
-      return;
-    }
-
-    setIsScanning(true);
-    try {
-      const dataUrl: string = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result as string);
-        reader.onerror = reject;
-        reader.readAsDataURL(file);
-      });
-      const base64 = dataUrl.split(',')[1] || '';
-
-      const result = await scanReceiptImage(base64, file.type || 'image/jpeg');
-
-      if (!result || result.items.length === 0) {
-        addToast({
-          title: 'Could Not Read Receipt',
-          description: 'Try a clearer, well-lit photo, or enter the purchase manually.',
-          type: 'error'
-        });
-        return;
-      }
-
-      // Attach the scanned photo itself as a receipt image
-      const newAtt: Attachment = {
-        id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
-        name: file.name,
-        url: dataUrl,
-        type: file.type.includes('pdf') ? 'pdf' : 'image',
-        size: file.size
-      };
-      setReceipts((prev) => [...prev, newAtt]);
-
-      // Best-effort match of the scanned store name to a saved store
-      const scannedStoreName = (result.storeName || '').toLowerCase().trim();
-      const matchedStore =
-        stores.find((s) => s.name.toLowerCase().trim() === scannedStoreName) ||
-        stores.find((s) => scannedStoreName && (s.name.toLowerCase().includes(scannedStoreName) || scannedStoreName.includes(s.name.toLowerCase())));
-      if (matchedStore) setStoreId(matchedStore.id);
-
-      if (result.date) setDate(result.date);
-      setDeliveryChargeInput(String(result.deliveryCharge || 0));
-      setTaxInput(String(result.tax || 0));
-      setOverallDiscountInput(String(result.discount || 0));
-
-      const newItems: ExpenseItem[] = result.items.map((scanned, idx) => {
-        const scannedName = scanned.name.toLowerCase().trim();
-        const matchedProduct =
-          products.find((p) => p.name.toLowerCase().trim() === scannedName) ||
-          products.find((p) => p.name.toLowerCase().includes(scannedName) || scannedName.includes(p.name.toLowerCase()));
-
-        const quantity = scanned.quantity || 1;
-        const unitPrice = scanned.unitPrice || 0;
-
-        return {
-          id: `item-${Date.now()}-${idx}`,
-          productId: matchedProduct?.id || `prod-scan-${Date.now()}-${idx}`,
-          productName: matchedProduct?.name || scanned.name || 'Scanned Item',
-          categoryId: matchedProduct?.categoryId || categories[0]?.id || 'cat-others',
-          brand: scanned.brand || matchedProduct?.brand || 'Generic',
-          quantity,
-          unit: scanned.unit || matchedProduct?.defaultUnit || 'pcs',
-          unitPrice,
-          discount: 0,
-          totalPrice: scanned.totalPrice || quantity * unitPrice,
-          notes: ''
-        };
-      });
-      setItems(newItems);
-
-      const unmatchedCount = newItems.filter((i) => !products.some((p) => p.id === i.productId)).length;
-      addToast({
-        title: 'Receipt Scanned!',
-        description:
-          unmatchedCount > 0
-            ? `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — ${unmatchedCount} aren't in your Product Master yet. Review the green-highlighted row(s) below and they'll be added automatically when you save.`
-            : `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — please review before saving.`,
-        type: 'success'
-      });
-    } catch (err) {
-      console.error('Receipt scan error:', err);
-      addToast({ title: 'Scan Failed', description: 'Something went wrong reading that image.', type: 'error' });
-    } finally {
-      setIsScanning(false);
-    }
+    scanReceiptForNewExpense(file);
   };
 
   const handleCancel = () => {
     clearExpenseDraft();
+    clearScanResult();
     setEditingExpense(null);
     setActiveTab('expenses');
   };
@@ -419,6 +348,7 @@ export const AddExpenseView: React.FC = () => {
     }
 
     clearExpenseDraft();
+    clearScanResult();
     setEditingExpense(null);
     setActiveTab('expenses');
   };
@@ -458,12 +388,12 @@ export const AddExpenseView: React.FC = () => {
         <div className="bg-gradient-to-r from-violet-600 to-indigo-600 dark:from-violet-700 dark:to-indigo-800 p-5 rounded-2xl shadow-md flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex items-center gap-3 text-white">
             <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center shrink-0">
-              {isScanning ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+              {isScanningReceipt ? <Loader2 className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
             </div>
             <div>
               <p className="font-bold text-sm">Scan Receipt with AI</p>
               <p className="text-xs text-white/80">
-                {isScanning ? 'Reading your receipt...' : 'Upload a photo and auto-fill store, items & prices below'}
+                {isScanningReceipt ? 'Reading your receipt...' : 'Upload a photo and auto-fill store, items & prices below'}
               </p>
             </div>
           </div>
@@ -471,17 +401,17 @@ export const AddExpenseView: React.FC = () => {
           <label
             htmlFor="ai-receipt-scan-upload"
             className={`inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-white text-indigo-700 font-bold text-xs shadow-sm transition-all shrink-0 ${
-              isScanning ? 'opacity-60 cursor-not-allowed' : 'hover:bg-white/90 cursor-pointer active:scale-95'
+              isScanningReceipt ? 'opacity-60 cursor-not-allowed' : 'hover:bg-white/90 cursor-pointer active:scale-95'
             }`}
           >
             <Upload className="w-4 h-4" />
-            <span>{isScanning ? 'Scanning...' : 'Upload Photo'}</span>
+            <span>{isScanningReceipt ? 'Scanning...' : 'Upload Photo'}</span>
           </label>
           <input
             id="ai-receipt-scan-upload"
             type="file"
             accept="image/*"
-            disabled={isScanning}
+            disabled={isScanningReceipt}
             onChange={handleScanReceipt}
             className="hidden"
           />

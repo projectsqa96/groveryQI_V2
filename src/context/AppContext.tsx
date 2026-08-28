@@ -1,7 +1,8 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
   Expense, Product, Category, Store, Platform, ShoppingList,
-  UserProfile, FilterOptions, ThemeMode, ToastMessage, PaymentMethod, PlatformType
+  UserProfile, FilterOptions, ThemeMode, ToastMessage, PaymentMethod, PlatformType,
+  ExpenseItem, Attachment
 } from '../types';
 import { DEFAULT_CATEGORIES, DEFAULT_STORES, DEFAULT_PLATFORMS, DEFAULT_PRODUCTS } from '../data/initialData';
 import { getSupabaseConfig, getSupabaseClient } from '../lib/supabase';
@@ -12,6 +13,7 @@ import {
   fetchExpensesFromSupabase, saveExpenseToSupabase, deleteExpenseFromSupabase,
   fetchShoppingListsFromSupabase, saveShoppingListToSupabase, deleteShoppingListFromSupabase
 } from '../lib/supabaseSync';
+import { scanReceiptImage, getGeminiConfig } from '../lib/gemini';
 
 // Auth lifecycle:
 // 'checking'    -> app just loaded, we're asking Supabase if a session exists
@@ -28,6 +30,19 @@ const EMPTY_USER: UserProfile = {
   preferredTheme: 'system',
   householdName: ''
 };
+
+interface ExpenseScanResult {
+  token: number;
+  matchedStoreId: string | null;
+  date: string | null;
+  deliveryChargeInput: string;
+  taxInput: string;
+  overallDiscountInput: string;
+  items: ExpenseItem[];
+  receiptAttachment: Attachment;
+  storeNameForToast: string;
+  unmatchedCount: number;
+}
 
 interface AppContextType {
   user: UserProfile;
@@ -101,6 +116,18 @@ interface AppContextType {
 
   removeAllDemoData: () => Promise<void>;
   resetToDemoData: () => Promise<void>;
+
+  // Receipt scanning lives here (not inside AddExpenseView) so it survives
+  // the user switching to a different tab mid-scan. AddExpenseView only
+  // renders while activeTab === 'add-expense', so it unmounts on tab switch;
+  // an in-flight scan owned by that component would silently discard its
+  // result when it later resolved against a component that no longer
+  // exists. Owning it here means the scan keeps running and its result is
+  // available whenever the user returns to Add Purchase.
+  isScanningReceipt: boolean;
+  scanResult: ExpenseScanResult | null;
+  scanReceiptForNewExpense: (file: File) => Promise<void>;
+  clearScanResult: () => void;
 }
 
 const initialFilters: FilterOptions = {
@@ -190,6 +217,113 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   const resetFilters = () => setFilters(initialFilters);
+
+  // Receipt scanning — deliberately owned here, not by AddExpenseView, so it
+  // survives the user switching tabs mid-scan (see AppContextType comment).
+  const [isScanningReceipt, setIsScanningReceipt] = useState(false);
+  const [scanResult, setScanResult] = useState<ExpenseScanResult | null>(null);
+  const clearScanResult = () => setScanResult(null);
+
+  const scanReceiptForNewExpense = useCallback(async (file: File) => {
+    if (!getGeminiConfig().isConfigured) {
+      addToast({
+        title: 'AI Scanning Not Configured',
+        description: 'Set VITE_GEMINI_API_KEY in your environment to enable this.',
+        type: 'error'
+      });
+      return;
+    }
+
+    setIsScanningReceipt(true);
+    try {
+      const dataUrl: string = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result as string);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+      const base64 = dataUrl.split(',')[1] || '';
+
+      const result = await scanReceiptImage(base64, file.type || 'image/jpeg');
+
+      if (!result || result.items.length === 0) {
+        addToast({
+          title: 'Could Not Read Receipt',
+          description: 'Try a clearer, well-lit photo, or enter the purchase manually.',
+          type: 'error'
+        });
+        return;
+      }
+
+      const receiptAttachment: Attachment = {
+        id: `att-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`,
+        name: file.name,
+        url: dataUrl,
+        type: file.type.includes('pdf') ? 'pdf' : 'image',
+        size: file.size
+      };
+
+      // Best-effort match of the scanned store name to a saved store
+      const scannedStoreName = (result.storeName || '').toLowerCase().trim();
+      const matchedStore =
+        stores.find((s) => s.name.toLowerCase().trim() === scannedStoreName) ||
+        stores.find((s) => scannedStoreName && (s.name.toLowerCase().includes(scannedStoreName) || scannedStoreName.includes(s.name.toLowerCase())));
+
+      const newItems: ExpenseItem[] = result.items.map((scanned, idx) => {
+        const scannedName = scanned.name.toLowerCase().trim();
+        const matchedProduct =
+          products.find((p) => p.name.toLowerCase().trim() === scannedName) ||
+          products.find((p) => p.name.toLowerCase().includes(scannedName) || scannedName.includes(p.name.toLowerCase()));
+
+        const quantity = scanned.quantity || 1;
+        const unitPrice = scanned.unitPrice || 0;
+
+        return {
+          id: `item-${Date.now()}-${idx}`,
+          productId: matchedProduct?.id || `prod-scan-${Date.now()}-${idx}`,
+          productName: matchedProduct?.name || scanned.name || 'Scanned Item',
+          categoryId: matchedProduct?.categoryId || categories[0]?.id || 'cat-others',
+          brand: scanned.brand || matchedProduct?.brand || 'Generic',
+          quantity,
+          unit: scanned.unit || matchedProduct?.defaultUnit || 'pcs',
+          unitPrice,
+          discount: 0,
+          totalPrice: scanned.totalPrice || quantity * unitPrice,
+          notes: ''
+        };
+      });
+
+      const unmatchedCount = newItems.filter((i) => !products.some((p) => p.id === i.productId)).length;
+
+      setScanResult({
+        token: Date.now(),
+        matchedStoreId: matchedStore?.id || null,
+        date: result.date || null,
+        deliveryChargeInput: String(result.deliveryCharge || 0),
+        taxInput: String(result.tax || 0),
+        overallDiscountInput: String(result.discount || 0),
+        items: newItems,
+        receiptAttachment,
+        storeNameForToast: result.storeName || 'the receipt',
+        unmatchedCount
+      });
+
+      addToast({
+        title: 'Receipt Scanned!',
+        description:
+          unmatchedCount > 0
+            ? `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — ${unmatchedCount} aren't in your Product Master yet. Review the green-highlighted row(s) below and they'll be added automatically when you save.`
+            : `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — please review before saving.`,
+        type: 'success'
+      });
+    } catch (err) {
+      console.error('Receipt scan error:', err);
+      addToast({ title: 'Scan Failed', description: 'Something went wrong reading that image.', type: 'error' });
+    } finally {
+      setIsScanningReceipt(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [products, categories, stores, addToast]);
 
   // Theme is a small per-account preference. It round-trips through the
   // Supabase user's metadata so it follows the account across devices,
@@ -900,7 +1034,11 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         resetPassword,
         updateProfile,
         removeAllDemoData,
-        resetToDemoData
+        resetToDemoData,
+        isScanningReceipt,
+        scanResult,
+        scanReceiptForNewExpense,
+        clearScanResult
       }}
     >
       {children}
