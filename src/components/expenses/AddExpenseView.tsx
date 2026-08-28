@@ -674,7 +674,8 @@ export const AddExpenseView: React.FC = () => {
                       </button>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
