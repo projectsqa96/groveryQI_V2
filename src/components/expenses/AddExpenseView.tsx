@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ExpenseItem, Attachment, PaymentMethod, PlatformType } from '../../types';
 import { scanReceiptImage, getGeminiConfig } from '../../lib/gemini';
@@ -96,20 +96,57 @@ export const AddExpenseView: React.FC = () => {
       : draft?.items || []
   );
 
-  // Auto-save a draft of the in-progress purchase (debounced) so a killed or
-  // refreshed tab can restore it. Skipped entirely while editing an existing
-  // expense — that flow should never be persisted as a "new purchase" draft.
+  // Let the user know their in-progress purchase was recovered, rather than
+  // silently restoring it — otherwise it's easy to assume the app just
+  // "kept working" instead of realizing a recovery actually happened.
+  useEffect(() => {
+    if (draft && (draft.items.length > 0 || draft.receipts.length > 0)) {
+      addToast({
+        title: 'Draft Restored',
+        description: 'Picked up your in-progress purchase where you left off.',
+        type: 'success'
+      });
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Auto-save a draft of the in-progress purchase so a killed or refreshed
+  // tab can restore it. Two layers: a short debounce for normal typing (so
+  // sessionStorage isn't hit on every keystroke), and an immediate, un-
+  // debounced flush the instant the tab is about to be hidden or unloaded —
+  // that second part matters because on mobile the tab can be suspended
+  // within a fraction of a second of switching away (e.g. opening the camera
+  // or another app), which can easily beat a 400ms debounce and silently
+  // drop whatever was just typed or just scanned. Skipped entirely while
+  // editing an existing expense — that flow should never be persisted as a
+  // "new purchase" draft.
+  const draftRef = useRef<ExpenseDraft | null>(null);
+  useEffect(() => {
+    const current: ExpenseDraft = {
+      storeId, platform, date, time, paymentMethod, notes, tagsInput,
+      deliveryChargeInput, taxInput, overallDiscountInput, receipts, items
+    };
+    draftRef.current = current;
+    if (isEditMode) return;
+    const timer = setTimeout(() => saveExpenseDraft(current), 400);
+    return () => clearTimeout(timer);
+  }, [isEditMode, storeId, platform, date, time, paymentMethod, notes, tagsInput, deliveryChargeInput, taxInput, overallDiscountInput, receipts, items]);
+
   useEffect(() => {
     if (isEditMode) return;
-    const timer = setTimeout(() => {
-      saveExpenseDraft({
-        storeId, platform, date, time, paymentMethod, notes, tagsInput,
-        deliveryChargeInput, taxInput, overallDiscountInput, receipts, items
-      });
-    }, 400);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isEditMode, storeId, platform, date, time, paymentMethod, notes, tagsInput, deliveryChargeInput, taxInput, overallDiscountInput, receipts, items]);
+    const flushNow = () => {
+      if (draftRef.current) saveExpenseDraft(draftRef.current);
+    };
+    const handleVisibility = () => {
+      if (document.visibilityState === 'hidden') flushNow();
+    };
+    document.addEventListener('visibilitychange', handleVisibility);
+    window.addEventListener('pagehide', flushNow);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibility);
+      window.removeEventListener('pagehide', flushNow);
+    };
+  }, [isEditMode]);
 
   // Product Row Change Handler
   const handleItemChange = (index: number, field: keyof ExpenseItem, value: any) => {
