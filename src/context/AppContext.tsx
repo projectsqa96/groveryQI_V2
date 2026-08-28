@@ -132,7 +132,29 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   const [user, setUser] = useState<UserProfile>(EMPTY_USER);
   const [themeState, setThemeState] = useState<ThemeMode>('system');
   const [authStatus, setAuthStatus] = useState<AuthStatus>(isSupabaseConfigured ? 'checking' : 'signedOut');
-  const [activeTab, setActiveTab] = useState<string>('dashboard');
+
+  // Mobile browsers frequently kill a backgrounded tab's page (e.g. while the
+  // camera or file picker is open) and reload it from scratch when the user
+  // returns. Remembering which screen was open in sessionStorage means that
+  // reload lands back where the user was instead of resetting to the
+  // dashboard. sessionStorage (not localStorage) is used deliberately so a
+  // stale tab isn't restored days later after the browser is fully closed.
+  const ACTIVE_TAB_STORAGE_KEY = 'groceryqi:active-tab';
+  const [activeTab, setActiveTabState] = useState<string>(() => {
+    try {
+      return sessionStorage.getItem(ACTIVE_TAB_STORAGE_KEY) || 'dashboard';
+    } catch {
+      return 'dashboard';
+    }
+  });
+  const setActiveTab = (tab: string) => {
+    setActiveTabState(tab);
+    try {
+      sessionStorage.setItem(ACTIVE_TAB_STORAGE_KEY, tab);
+    } catch {
+      /* non-fatal: tab just won't survive a reload this time */
+    }
+  };
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [products, setProducts] = useState<Product[]>([]);
@@ -198,6 +220,12 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
     setStores([]);
     setShoppingLists([]);
     setEditingExpense(null);
+    setActiveTabState('dashboard');
+    try {
+      sessionStorage.removeItem(ACTIVE_TAB_STORAGE_KEY);
+    } catch {
+      /* non-fatal */
+    }
   };
 
   // Pulls every collection for the signed-in user from Supabase.

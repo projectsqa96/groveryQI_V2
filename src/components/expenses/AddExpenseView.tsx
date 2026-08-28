@@ -1,8 +1,63 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ExpenseItem, Attachment, PaymentMethod, PlatformType } from '../../types';
 import { scanReceiptImage, getGeminiConfig } from '../../lib/gemini';
 import { Plus, Trash2, Upload, FileText, Check, ArrowLeft, Image as ImageIcon, Sparkles, Loader2 } from 'lucide-react';
+
+// Mobile browsers frequently kill a backgrounded tab (e.g. while the camera
+// or file picker triggered by the receipt scan / upload buttons is open) and
+// silently reload the page when the user returns. Without persistence that
+// wipes every field, added items, and the scan-in-progress. This draft is
+// auto-saved to sessionStorage as the user fills the form and restored on
+// mount, so a reload (or a manual refresh) picks back up where they left off.
+const DRAFT_STORAGE_KEY = 'groceryqi:add-expense-draft';
+
+type ExpenseDraft = {
+  storeId: string;
+  platform: PlatformType;
+  date: string;
+  time: string;
+  paymentMethod: PaymentMethod;
+  notes: string;
+  tagsInput: string;
+  deliveryChargeInput: string;
+  taxInput: string;
+  overallDiscountInput: string;
+  receipts: Attachment[];
+  items: ExpenseItem[];
+};
+
+const loadExpenseDraft = (): ExpenseDraft | null => {
+  try {
+    const raw = sessionStorage.getItem(DRAFT_STORAGE_KEY);
+    return raw ? (JSON.parse(raw) as ExpenseDraft) : null;
+  } catch {
+    return null;
+  }
+};
+
+const saveExpenseDraft = (draft: ExpenseDraft) => {
+  try {
+    sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(draft));
+  } catch {
+    // Most likely the storage quota was exceeded by large receipt photos.
+    // Retry without attachments so the rest of the draft (items, amounts,
+    // store, etc.) still survives a reload.
+    try {
+      sessionStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({ ...draft, receipts: [] }));
+    } catch {
+      /* give up silently — not worth interrupting the user over this */
+    }
+  }
+};
+
+const clearExpenseDraft = () => {
+  try {
+    sessionStorage.removeItem(DRAFT_STORAGE_KEY);
+  } catch {
+    /* non-fatal */
+  }
+};
 
 export const AddExpenseView: React.FC = () => {
   const { 
@@ -17,38 +72,44 @@ export const AddExpenseView: React.FC = () => {
   // Sentinel value for the "+ Add New Product" dropdown option
   const NEW_PRODUCT_VALUE = '__new__';
 
-  const [storeId, setStoreId] = useState(editingExpense?.storeId || stores[0]?.id || '');
-  const [platform, setPlatform] = useState<PlatformType>(editingExpense?.platform || 'Offline');
-  const [date, setDate] = useState(editingExpense?.date || new Date().toISOString().slice(0, 10));
-  const [time, setTime] = useState(editingExpense?.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
-  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editingExpense?.paymentMethod || 'UPI');
-  const [notes, setNotes] = useState(editingExpense?.notes || '');
-  const [tagsInput, setTagsInput] = useState((editingExpense?.tags || []).join(', '));
-  const [deliveryChargeInput, setDeliveryChargeInput] = useState<string>(String(editingExpense?.deliveryCharge ?? 0));
-  const [taxInput, setTaxInput] = useState<string>(String(editingExpense?.tax ?? 0));
-  const [overallDiscountInput, setOverallDiscountInput] = useState<string>(String(editingExpense?.discount ?? 0));
-  const [receipts, setReceipts] = useState<Attachment[]>(editingExpense?.receipts || []);
+  // Only ever restore a draft when starting a brand-new purchase — an
+  // in-progress edit of an existing expense always reflects that expense's
+  // real saved data instead, so a stray draft can never overwrite it.
+  const [draft] = useState<ExpenseDraft | null>(() => (editingExpense ? null : loadExpenseDraft()));
+
+  const [storeId, setStoreId] = useState(editingExpense?.storeId || draft?.storeId || stores[0]?.id || '');
+  const [platform, setPlatform] = useState<PlatformType>(editingExpense?.platform || draft?.platform || 'Offline');
+  const [date, setDate] = useState(editingExpense?.date || draft?.date || new Date().toISOString().slice(0, 10));
+  const [time, setTime] = useState(editingExpense?.time || draft?.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', hour12: false }));
+  const [paymentMethod, setPaymentMethod] = useState<PaymentMethod>(editingExpense?.paymentMethod || draft?.paymentMethod || 'UPI');
+  const [notes, setNotes] = useState(editingExpense?.notes || draft?.notes || '');
+  const [tagsInput, setTagsInput] = useState((editingExpense?.tags || []).join(', ') || draft?.tagsInput || '');
+  const [deliveryChargeInput, setDeliveryChargeInput] = useState<string>(String(editingExpense?.deliveryCharge ?? draft?.deliveryChargeInput ?? 0));
+  const [taxInput, setTaxInput] = useState<string>(String(editingExpense?.tax ?? draft?.taxInput ?? 0));
+  const [overallDiscountInput, setOverallDiscountInput] = useState<string>(String(editingExpense?.discount ?? draft?.overallDiscountInput ?? 0));
+  const [receipts, setReceipts] = useState<Attachment[]>(editingExpense?.receipts || draft?.receipts || []);
 
   // Dynamic Product Items
   const [items, setItems] = useState<ExpenseItem[]>(
     editingExpense?.items && editingExpense.items.length > 0
       ? editingExpense.items
-      : [
-          {
-            id: `item-${Date.now()}-1`,
-            productId: products[0]?.id || 'prod-custom-1',
-            productName: products[0]?.name || '',
-            categoryId: products[0]?.categoryId || categories[0]?.id || 'cat-veg',
-            brand: products[0]?.brand || 'Generic',
-            quantity: 1,
-            unit: products[0]?.defaultUnit || 'kg',
-            unitPrice: 3.50,
-            discount: 0,
-            totalPrice: 3.50,
-            notes: ''
-          }
-        ]
+      : draft?.items || []
   );
+
+  // Auto-save a draft of the in-progress purchase (debounced) so a killed or
+  // refreshed tab can restore it. Skipped entirely while editing an existing
+  // expense — that flow should never be persisted as a "new purchase" draft.
+  useEffect(() => {
+    if (isEditMode) return;
+    const timer = setTimeout(() => {
+      saveExpenseDraft({
+        storeId, platform, date, time, paymentMethod, notes, tagsInput,
+        deliveryChargeInput, taxInput, overallDiscountInput, receipts, items
+      });
+    }, 400);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isEditMode, storeId, platform, date, time, paymentMethod, notes, tagsInput, deliveryChargeInput, taxInput, overallDiscountInput, receipts, items]);
 
   // Product Row Change Handler
   const handleItemChange = (index: number, field: keyof ExpenseItem, value: any) => {
@@ -245,6 +306,7 @@ export const AddExpenseView: React.FC = () => {
   };
 
   const handleCancel = () => {
+    clearExpenseDraft();
     setEditingExpense(null);
     setActiveTab('expenses');
   };
@@ -319,6 +381,7 @@ export const AddExpenseView: React.FC = () => {
       addExpense(payload);
     }
 
+    clearExpenseDraft();
     setEditingExpense(null);
     setActiveTab('expenses');
   };
