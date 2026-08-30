@@ -83,7 +83,14 @@ Also extract the store name, purchase date, and the totals section (subtotal, an
 discount, delivery/service fee, tax, and grand total).
 
 Rules:
-- If a numeric field isn't visible or legible, use your best reasonable estimate
+- Prices matter most — look carefully at the price column for every line, even on
+  faint, low-contrast, or partially cropped receipts. A line item without a price is
+  much less useful than one without a brand.
+- If only one of "unit price" or "line total" is legible for an item, compute the
+  other one yourself from quantity (unitPrice = totalPrice / quantity, or
+  totalPrice = unitPrice * quantity). Only use 0 for a price if there is truly no
+  price visible anywhere on that line and it cannot be derived.
+- If a non-price field isn't visible or legible, use your best reasonable estimate
   rather than leaving it blank; never invent items that aren't on the receipt.
 - "unit" should be a short shopping unit like kg, g, L, ml, pcs, or pack.
 - If the item text on the receipt includes a recognizable brand (e.g. "AMUL
@@ -143,14 +150,23 @@ export const scanReceiptImage = async (
       storeName: parsed.storeName || '',
       date: parsed.date || new Date().toISOString().slice(0, 10),
       items: Array.isArray(parsed.items)
-        ? parsed.items.map((i: any) => ({
-            name: i.name || 'Unknown Item',
-            brand: i.brand || '',
-            quantity: Number(i.quantity) || 1,
-            unit: i.unit || 'pcs',
-            unitPrice: Number(i.unitPrice) || 0,
-            totalPrice: Number(i.totalPrice) || 0
-          }))
+        ? parsed.items.map((i: any) => {
+            const quantity = Number(i.quantity) || 1;
+            let unitPrice = Number(i.unitPrice) || 0;
+            let totalPrice = Number(i.totalPrice) || 0;
+            // Defensive cross-fill: if the model only populated one of the two
+            // price fields, derive the other instead of silently leaving a 0.
+            if (unitPrice === 0 && totalPrice > 0) unitPrice = totalPrice / quantity;
+            if (totalPrice === 0 && unitPrice > 0) totalPrice = unitPrice * quantity;
+            return {
+              name: i.name || 'Unknown Item',
+              brand: i.brand || '',
+              quantity,
+              unit: i.unit || 'pcs',
+              unitPrice,
+              totalPrice
+            };
+          })
         : [],
       subtotal: Number(parsed.subtotal) || 0,
       discount: Number(parsed.discount) || 0,

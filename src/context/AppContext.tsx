@@ -294,6 +294,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
       });
 
       const unmatchedCount = newItems.filter((i) => !products.some((p) => p.id === i.productId)).length;
+      const noPricesDetected = newItems.every((i) => i.unitPrice === 0 && i.totalPrice === 0);
 
       setScanResult({
         token: Date.now(),
@@ -308,14 +309,25 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
         unmatchedCount
       });
 
-      addToast({
-        title: 'Receipt Scanned!',
-        description:
-          unmatchedCount > 0
-            ? `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — ${unmatchedCount} aren't in your Product Master yet. Review the green-highlighted row(s) below and they'll be added automatically when you save.`
-            : `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — please review before saving.`,
-        type: 'success'
-      });
+      if (noPricesDetected) {
+        // Don't claim success when the numbers that matter most — the prices
+        // — weren't actually read. A silent 0 grand total looks like a bug;
+        // this makes the real cause (unreadable pricing on the photo) clear.
+        addToast({
+          title: 'Prices Not Detected',
+          description: `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'}, but couldn't read any prices off that photo — please fill in the unit prices below manually.`,
+          type: 'error'
+        });
+      } else {
+        addToast({
+          title: 'Receipt Scanned!',
+          description:
+            unmatchedCount > 0
+              ? `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — ${unmatchedCount} aren't in your Product Master yet. Review the green-highlighted row(s) below and they'll be added automatically when you save.`
+              : `Found ${newItems.length} item(s) from ${result.storeName || 'the receipt'} — please review before saving.`,
+          type: 'success'
+        });
+      }
     } catch (err) {
       console.error('Receipt scan error:', err);
       addToast({ title: 'Scan Failed', description: 'Something went wrong reading that image.', type: 'error' });
