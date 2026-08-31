@@ -375,34 +375,70 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   };
 
   // Pulls every collection for the signed-in user from Supabase.
+  //
+  // Hardened against ever leaving the user stuck on the "Loading your data
+  // from Supabase..." screen forever:
+  //  - each individual fetch already catches its own errors internally and
+  //    resolves to null rather than throwing, but this wraps the whole thing
+  //    in try/catch/finally anyway as a last line of defense against any
+  //    unexpected failure.
+  //  - a "this is taking a while" toast fires at 15s as a reassurance, but
+  //    unlike an abandon-and-timeout approach, the real fetch is never given
+  //    up on — some connections (e.g. a Supabase project waking up from
+  //    being idle) can legitimately take 30-60s+, and discarding a fetch
+  //    that would have succeeded just to fail fast is worse than waiting.
   const loadAllData = useCallback(async (mySessionToken: number) => {
     setAuthStatus('loadingData');
-    const [cats, strs, prods, exps, lists] = await Promise.all([
-      fetchCategoriesFromSupabase(),
-      fetchStoresFromSupabase(),
-      fetchProductsFromSupabase(),
-      fetchExpensesFromSupabase(),
-      fetchShoppingListsFromSupabase()
-    ]);
+    const slowWarningTimer = setTimeout(() => {
+      if (mySessionToken === sessionTokenRef.current) {
+        addToast({
+          title: 'Still Loading...',
+          description: "This is taking longer than usual. Hang tight — we're still connecting to Supabase.",
+          type: 'info'
+        });
+      }
+    }, 15000);
 
-    // A logout (or a newer login) happened while this fetch was in flight.
-    if (mySessionToken !== sessionTokenRef.current) return;
+    try {
+      const [cats, strs, prods, exps, lists] = await Promise.all([
+        fetchCategoriesFromSupabase(),
+        fetchStoresFromSupabase(),
+        fetchProductsFromSupabase(),
+        fetchExpensesFromSupabase(),
+        fetchShoppingListsFromSupabase()
+      ]);
 
-    setCategories(cats || []);
-    setStores(strs || []);
-    setProducts(prods || []);
-    setExpenses(exps || []);
-    setShoppingLists(lists || []);
+      // A logout (or a newer login) happened while this fetch was in flight.
+      if (mySessionToken !== sessionTokenRef.current) return;
 
-    if (cats === null || strs === null || prods === null || exps === null || lists === null) {
-      addToast({
-        title: 'Could not load some data',
-        description: 'There was a problem reaching Supabase. Pull to refresh or try again shortly.',
-        type: 'error'
-      });
+      setCategories(cats || []);
+      setStores(strs || []);
+      setProducts(prods || []);
+      setExpenses(exps || []);
+      setShoppingLists(lists || []);
+
+      if (cats === null || strs === null || prods === null || exps === null || lists === null) {
+        addToast({
+          title: 'Could not load some data',
+          description: 'There was a problem reaching Supabase. Pull to refresh or try again shortly.',
+          type: 'error'
+        });
+      }
+    } catch (err) {
+      console.error('Unexpected error loading data from Supabase:', err);
+      if (mySessionToken === sessionTokenRef.current) {
+        addToast({
+          title: 'Something Went Wrong',
+          description: 'Could not load your data. Try refreshing the page.',
+          type: 'error'
+        });
+      }
+    } finally {
+      clearTimeout(slowWarningTimer);
+      if (mySessionToken === sessionTokenRef.current) {
+        setAuthStatus('ready');
+      }
     }
-
-    setAuthStatus('ready');
   }, [addToast]);
 
   const syncWithSupabase = useCallback(async () => {
