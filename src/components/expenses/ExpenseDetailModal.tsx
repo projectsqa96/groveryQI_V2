@@ -2,14 +2,20 @@ import React from 'react';
 import { useApp } from '../../context/AppContext';
 import { formatCurrency, formatDate } from '../../utils/mathUtils';
 import { exportToPDFPrint } from '../../utils/exportUtils';
-import { X, Printer, Store, Calendar, CreditCard, Tag, FileText, Image as ImageIcon, ExternalLink } from 'lucide-react';
+import { X, Printer, Store, Calendar, CreditCard, Tag, FileText, Image as ImageIcon, ExternalLink, Edit3 } from 'lucide-react';
 
 export const ExpenseDetailModal: React.FC = () => {
-  const { selectedExpenseForModal, setSelectedExpenseForModal, setSelectedReceiptForModal, user } = useApp();
+  const { selectedExpenseForModal, setSelectedExpenseForModal, setSelectedReceiptForModal, setEditingExpense, setActiveTab, user } = useApp();
 
   if (!selectedExpenseForModal) return null;
 
   const exp = selectedExpenseForModal;
+
+  const handleEdit = () => {
+    setEditingExpense(exp);
+    setSelectedExpenseForModal(null);
+    setActiveTab('add-expense');
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
@@ -22,6 +28,13 @@ export const ExpenseDetailModal: React.FC = () => {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              onClick={handleEdit}
+              className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
+              title="Edit This Purchase"
+            >
+              <Edit3 className="w-4 h-4" />
+            </button>
             <button
               onClick={() => exportToPDFPrint([exp], user.currency, `Expense Receipt - ${exp.storeName}`)}
               className="p-2 text-slate-600 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl transition-colors"
