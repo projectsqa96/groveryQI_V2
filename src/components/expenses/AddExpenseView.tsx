@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ExpenseItem, Attachment, PaymentMethod, PlatformType } from '../../types';
-import { computeLineTotal, computeUnitPriceFromTotal, getUnitPriceBasisLabel } from '../../utils/mathUtils';
+import { computeUnitPriceFromTotal, getUnitPriceBasisLabel } from '../../utils/mathUtils';
 import { Plus, Trash2, Upload, FileText, Check, ArrowLeft, Image as ImageIcon, Sparkles, Loader2 } from 'lucide-react';
 
 // Mobile browsers frequently kill a backgrounded tab (e.g. while the camera
@@ -193,28 +193,21 @@ export const AddExpenseView: React.FC = () => {
         }
       }
 
-      // Auto recalculate total price for this row. Quantity is converted to
-      // the unit price's base unit first (e.g. 500 ml -> 0.5 L) so a price
-      // quoted per L/kg comes out correct even when the quantity itself was
-      // entered in the smaller ml/g unit.
+      // Total Price is the single source of truth for what was actually paid
+      // — Unit Price is always a *derived*, read-only figure calculated from
+      // it, never the other way around. Quantity is converted to the price's
+      // base unit first (e.g. 500 g -> 0.5 kg) so "500g for ₹100" correctly
+      // implies ₹200/kg rather than treating 500 as a literal multiplier.
       //
-      // Special case: if the user just typed directly into the Total Price
-      // field (e.g. copying the line total straight off a receipt instead of
-      // working out a per-unit price themselves), go the other way — keep
-      // their typed total as-is and back-derive what the implied unit price
-      // must be, rather than overwriting what they just typed.
-      if (field === 'totalPrice') {
-        const total = parseFloat(value as any) || 0;
-        const qty = parseFloat(item.quantity as any) || 0;
-        const disc = parseFloat(item.discount as any) || 0;
-        item.totalPrice = total;
-        item.unitPrice = computeUnitPriceFromTotal(total, item.unit, qty, disc);
-      } else {
-        const qty = parseFloat(item.quantity as any) || 0;
-        const uPrice = parseFloat(item.unitPrice as any) || 0;
-        const disc = parseFloat(item.discount as any) || 0;
-        item.totalPrice = computeLineTotal(qty, item.unit, uPrice, disc);
-      }
+      // Editing Total Price directly updates it and re-derives Unit Price.
+      // Editing anything else (quantity, unit, discount, product) keeps the
+      // Total Price exactly as typed and re-derives Unit Price from it —
+      // correcting the quantity/unit shouldn't silently change what you paid.
+      const total = field === 'totalPrice' ? (parseFloat(value as any) || 0) : (parseFloat(item.totalPrice as any) || 0);
+      const qty = parseFloat(item.quantity as any) || 0;
+      const disc = parseFloat(item.discount as any) || 0;
+      item.totalPrice = total;
+      item.unitPrice = computeUnitPriceFromTotal(total, item.unit, qty, disc);
 
       updated[index] = item;
       return updated;
@@ -233,9 +226,9 @@ export const AddExpenseView: React.FC = () => {
         brand: defaultProd?.brand || 'Generic',
         quantity: 1,
         unit: defaultProd?.defaultUnit || 'pcs',
-        unitPrice: 2.50,
+        unitPrice: 0,
         discount: 0,
-        totalPrice: 2.50,
+        totalPrice: 0,
         notes: ''
       }
     ]);
@@ -323,17 +316,19 @@ export const AddExpenseView: React.FC = () => {
       .filter((t) => t.length > 0);
 
     // Finalize numeric fields in case a row was still mid-edit (not blurred)
-    // when Save was clicked.
+    // when Save was clicked. Total Price is authoritative (what was actually
+    // paid) — Unit Price is always re-derived from it, matching the same
+    // anchor model used live in handleItemChange.
     const finalizedItems = items.map((item) => {
       const quantity = parseFloat(item.quantity as any) || 0;
-      const unitPrice = parseFloat(item.unitPrice as any) || 0;
+      const totalPrice = parseFloat(item.totalPrice as any) || 0;
       const discount = parseFloat(item.discount as any) || 0;
       return {
         ...item,
         quantity,
-        unitPrice,
         discount,
-        totalPrice: computeLineTotal(quantity, item.unit, unitPrice, discount)
+        totalPrice,
+        unitPrice: computeUnitPriceFromTotal(totalPrice, item.unit, quantity, discount)
       };
     });
     const finalizedSubtotal = finalizedItems.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -675,20 +670,16 @@ export const AddExpenseView: React.FC = () => {
                       />
                     </td>
 
-                    {/* Unit Price */}
+                    {/* Unit Price — read-only, always derived from Total
+                        Price ÷ quantity (with kg/L conversion for g/ml). You
+                        enter what you paid; this shows the implied rate. */}
                     <td className="py-2.5 px-2">
-                      <input
-                        type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={item.unitPrice}
-                        onChange={(e) => {
-                          const v = e.target.value;
-                          if (/^\d*\.?\d*$/.test(v)) handleItemChange(idx, 'unitPrice', v);
-                        }}
-                        onBlur={() => handleItemChange(idx, 'unitPrice', parseFloat(item.unitPrice as any) || 0)}
-                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium"
-                      />
+                      <div
+                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-100 dark:bg-slate-800/50 border border-dashed border-slate-300 dark:border-slate-700 text-slate-500 dark:text-slate-400 font-medium"
+                        title="Calculated automatically from Total Price ÷ quantity"
+                      >
+                        {user.currency}{(parseFloat(item.unitPrice as any) || 0).toFixed(2)}
+                      </div>
                       {getUnitPriceBasisLabel(item.unit) && (
                         <div className="text-[10px] text-slate-400 mt-0.5">
                           per {getUnitPriceBasisLabel(item.unit)} (not per {item.unit})
