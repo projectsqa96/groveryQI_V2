@@ -4,6 +4,41 @@ export const formatCurrency = (amount: number, currencySymbol = '$'): string => 
   return `${currencySymbol}${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 };
 
+// Some units are conventionally priced by a larger "base" unit even when the
+// purchased quantity is entered in a smaller one — e.g. milk/oil is priced
+// per Liter but a carton is bought as "500 ml", and spices are priced per kg
+// but a packet is bought as "250 g". Without this conversion, entering
+// quantity=500, unit='ml', unitPrice=15 (meant as ₹15/L) would wrongly
+// compute 500 × 15 = 7500 instead of the correct 0.5 × 15 = 7.50.
+const UNIT_TO_BASE_FACTOR: Record<string, number> = {
+  g: 0.001, gm: 0.001, gms: 0.001, gram: 0.001, grams: 0.001,
+  ml: 0.001, millilitre: 0.001, milliliter: 0.001, millilitres: 0.001, milliliters: 0.001
+};
+
+// The larger unit a given small unit is priced against (only meaningful for
+// g/ml — everything else is priced 1:1 against itself).
+const UNIT_TO_BASE_NAME: Record<string, string> = {
+  g: 'kg', gm: 'kg', gms: 'kg', gram: 'kg', grams: 'kg',
+  ml: 'L', millilitre: 'L', milliliter: 'L', millilitres: 'L', milliliters: 'L'
+};
+
+export const getUnitConversionFactor = (unit: string): number => {
+  const key = (unit || '').trim().toLowerCase();
+  return UNIT_TO_BASE_FACTOR[key] ?? 1;
+};
+
+// For UI hints — e.g. showing "≈ ₹/L" next to the unit price field when the
+// selected unit is 'ml', so it's clear what the price is actually per.
+export const getUnitPriceBasisLabel = (unit: string): string | null => {
+  const key = (unit || '').trim().toLowerCase();
+  return UNIT_TO_BASE_NAME[key] || null;
+};
+
+export const computeLineTotal = (quantity: number, unit: string, unitPrice: number, discount: number = 0): number => {
+  const scaledQuantity = quantity * getUnitConversionFactor(unit);
+  return Math.max(0, scaledQuantity * unitPrice - discount);
+};
+
 // Parses a 'YYYY-MM-DD' (optionally with a time part) string into a LOCAL Date,
 // avoiding the classic bug where `new Date('YYYY-MM-DD')` is parsed as UTC
 // midnight and then shifts to the previous/next day once converted to the

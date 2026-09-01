@@ -1,4 +1,5 @@
 import { GoogleGenAI } from '@google/genai';
+import { getUnitConversionFactor } from '../utils/mathUtils';
 
 // Model used for receipt scanning. Uses Google's "-latest" alias so this
 // automatically tracks their current stable Flash model instead of pointing
@@ -156,8 +157,13 @@ export const scanReceiptImage = async (
             let totalPrice = Number(i.totalPrice) || 0;
             // Defensive cross-fill: if the model only populated one of the two
             // price fields, derive the other instead of silently leaving a 0.
-            if (unitPrice === 0 && totalPrice > 0) unitPrice = totalPrice / quantity;
-            if (totalPrice === 0 && unitPrice > 0) totalPrice = unitPrice * quantity;
+            // Quantity is converted to the price's base unit first (e.g. a
+            // scanned "500 ml" only converts to 0.5 when deriving against a
+            // per-Liter price) so this matches the same convention used
+            // everywhere else totals are computed from unit price x quantity.
+            const scaledQty = quantity * getUnitConversionFactor(i.unit || 'pcs');
+            if (unitPrice === 0 && totalPrice > 0) unitPrice = totalPrice / (scaledQty || 1);
+            if (totalPrice === 0 && unitPrice > 0) totalPrice = unitPrice * scaledQty;
             return {
               name: i.name || 'Unknown Item',
               brand: i.brand || '',

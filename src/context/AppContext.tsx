@@ -14,6 +14,7 @@ import {
   fetchShoppingListsFromSupabase, saveShoppingListToSupabase, deleteShoppingListFromSupabase
 } from '../lib/supabaseSync';
 import { scanReceiptImage, getGeminiConfig } from '../lib/gemini';
+import { computeLineTotal } from '../utils/mathUtils';
 
 // Auth lifecycle:
 // 'checking'    -> app just loaded, we're asking Supabase if a session exists
@@ -288,7 +289,7 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
           unit: scanned.unit || matchedProduct?.defaultUnit || 'pcs',
           unitPrice,
           discount: 0,
-          totalPrice: scanned.totalPrice || quantity * unitPrice,
+          totalPrice: scanned.totalPrice || computeLineTotal(quantity, scanned.unit || 'pcs', unitPrice),
           notes: ''
         };
       });

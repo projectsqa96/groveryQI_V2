@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ExpenseItem, Attachment, PaymentMethod, PlatformType } from '../../types';
+import { computeLineTotal, getUnitPriceBasisLabel } from '../../utils/mathUtils';
 import { Plus, Trash2, Upload, FileText, Check, ArrowLeft, Image as ImageIcon, Sparkles, Loader2 } from 'lucide-react';
 
 // Mobile browsers frequently kill a backgrounded tab (e.g. while the camera
@@ -192,11 +193,14 @@ export const AddExpenseView: React.FC = () => {
         }
       }
 
-      // Auto recalculate total price for this row
+      // Auto recalculate total price for this row. Quantity is converted to
+      // the unit price's base unit first (e.g. 500 ml -> 0.5 L) so a price
+      // quoted per L/kg comes out correct even when the quantity itself was
+      // entered in the smaller ml/g unit.
       const qty = parseFloat(item.quantity as any) || 0;
       const uPrice = parseFloat(item.unitPrice as any) || 0;
       const disc = parseFloat(item.discount as any) || 0;
-      item.totalPrice = Math.max(0, qty * uPrice - disc);
+      item.totalPrice = computeLineTotal(qty, item.unit, uPrice, disc);
 
       updated[index] = item;
       return updated;
@@ -315,7 +319,7 @@ export const AddExpenseView: React.FC = () => {
         quantity,
         unitPrice,
         discount,
-        totalPrice: Math.max(0, quantity * unitPrice - discount)
+        totalPrice: computeLineTotal(quantity, item.unit, unitPrice, discount)
       };
     });
     const finalizedSubtotal = finalizedItems.reduce((sum, item) => sum + item.totalPrice, 0);
@@ -671,6 +675,11 @@ export const AddExpenseView: React.FC = () => {
                         onBlur={() => handleItemChange(idx, 'unitPrice', parseFloat(item.unitPrice as any) || 0)}
                         className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-medium"
                       />
+                      {getUnitPriceBasisLabel(item.unit) && (
+                        <div className="text-[10px] text-slate-400 mt-0.5">
+                          per {getUnitPriceBasisLabel(item.unit)} (not per {item.unit})
+                        </div>
+                      )}
                     </td>
 
                     {/* Item Discount */}
