@@ -39,6 +39,16 @@ export const computeLineTotal = (quantity: number, unit: string, unitPrice: numb
   return Math.max(0, scaledQuantity * unitPrice - discount);
 };
 
+// Reverse of computeLineTotal — used when the user types the line total
+// directly (e.g. copying the amount straight off a receipt) instead of
+// working out a per-unit price themselves. Returns the implied unit price so
+// price-history tracking still has a meaningful per-unit figure.
+export const computeUnitPriceFromTotal = (totalPrice: number, unit: string, quantity: number, discount: number = 0): number => {
+  const scaledQuantity = quantity * getUnitConversionFactor(unit);
+  if (scaledQuantity <= 0) return 0;
+  return Math.max(0, (totalPrice + discount) / scaledQuantity);
+};
+
 // Parses a 'YYYY-MM-DD' (optionally with a time part) string into a LOCAL Date,
 // avoiding the classic bug where `new Date('YYYY-MM-DD')` is parsed as UTC
 // midnight and then shifts to the previous/next day once converted to the

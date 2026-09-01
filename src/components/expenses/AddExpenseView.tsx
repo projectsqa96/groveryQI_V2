@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { ExpenseItem, Attachment, PaymentMethod, PlatformType } from '../../types';
-import { computeLineTotal, getUnitPriceBasisLabel } from '../../utils/mathUtils';
+import { computeLineTotal, computeUnitPriceFromTotal, getUnitPriceBasisLabel } from '../../utils/mathUtils';
 import { Plus, Trash2, Upload, FileText, Check, ArrowLeft, Image as ImageIcon, Sparkles, Loader2 } from 'lucide-react';
 
 // Mobile browsers frequently kill a backgrounded tab (e.g. while the camera
@@ -197,10 +197,24 @@ export const AddExpenseView: React.FC = () => {
       // the unit price's base unit first (e.g. 500 ml -> 0.5 L) so a price
       // quoted per L/kg comes out correct even when the quantity itself was
       // entered in the smaller ml/g unit.
-      const qty = parseFloat(item.quantity as any) || 0;
-      const uPrice = parseFloat(item.unitPrice as any) || 0;
-      const disc = parseFloat(item.discount as any) || 0;
-      item.totalPrice = computeLineTotal(qty, item.unit, uPrice, disc);
+      //
+      // Special case: if the user just typed directly into the Total Price
+      // field (e.g. copying the line total straight off a receipt instead of
+      // working out a per-unit price themselves), go the other way — keep
+      // their typed total as-is and back-derive what the implied unit price
+      // must be, rather than overwriting what they just typed.
+      if (field === 'totalPrice') {
+        const total = parseFloat(value as any) || 0;
+        const qty = parseFloat(item.quantity as any) || 0;
+        const disc = parseFloat(item.discount as any) || 0;
+        item.totalPrice = total;
+        item.unitPrice = computeUnitPriceFromTotal(total, item.unit, qty, disc);
+      } else {
+        const qty = parseFloat(item.quantity as any) || 0;
+        const uPrice = parseFloat(item.unitPrice as any) || 0;
+        const disc = parseFloat(item.discount as any) || 0;
+        item.totalPrice = computeLineTotal(qty, item.unit, uPrice, disc);
+      }
 
       updated[index] = item;
       return updated;
@@ -697,9 +711,27 @@ export const AddExpenseView: React.FC = () => {
                       />
                     </td>
 
-                    {/* Total Price */}
-                    <td className="py-2.5 px-2 text-right font-bold text-slate-900 dark:text-slate-100">
-                      {user.currency}{item.totalPrice.toFixed(2)}
+                    {/* Total Price — editable so you can type the line total
+                        straight off a receipt; the implied unit price is
+                        back-calculated automatically. */}
+                    <td className="py-2.5 px-2">
+                      <div className="relative">
+                        <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-400 pointer-events-none">
+                          {user.currency}
+                        </span>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          placeholder="0.00"
+                          value={item.totalPrice}
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            if (/^\d*\.?\d*$/.test(v)) handleItemChange(idx, 'totalPrice', v);
+                          }}
+                          onBlur={() => handleItemChange(idx, 'totalPrice', parseFloat(item.totalPrice as any) || 0)}
+                          className="w-full pl-6 pr-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 font-bold text-right"
+                        />
+                      </div>
                     </td>
 
                     {/* Delete Row */}
