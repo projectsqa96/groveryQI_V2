@@ -3,6 +3,7 @@ import { useApp } from '../../context/AppContext';
 import { ExpenseItem, Attachment, PaymentMethod, PlatformType } from '../../types';
 import { computeUnitPriceFromTotal, getUnitPriceBasisLabel } from '../../utils/mathUtils';
 import { Plus, Trash2, Upload, FileText, Check, ArrowLeft, Image as ImageIcon, Sparkles, Loader2 } from 'lucide-react';
+import { ProductSearchSelect } from './ProductSearchSelect';
 
 // Mobile browsers frequently kill a backgrounded tab (e.g. while the camera
 // or file picker triggered by the receipt scan / upload buttons is open) and
@@ -591,20 +592,13 @@ export const AddExpenseView: React.FC = () => {
                   <tr key={item.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/20">
                     {/* Product Selection / Name */}
                     <td className="py-2.5 px-2">
-                      <select
+                      <ProductSearchSelect
+                        products={products}
                         value={isNewProduct ? NEW_PRODUCT_VALUE : item.productId}
-                        onChange={(e) => handleItemChange(idx, 'productId', e.target.value)}
-                        className="w-full px-2 py-1.5 text-xs rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-900 dark:text-slate-100 mb-1 font-medium"
-                      >
-                        <option value={NEW_PRODUCT_VALUE} className="font-bold text-emerald-600">
-                          + Add New Product / Brand
-                        </option>
-                        {products.map((p) => (
-                          <option key={p.id} value={p.id}>
-                            {p.name} ({p.brand})
-                          </option>
-                        ))}
-                      </select>
+                        newProductValue={NEW_PRODUCT_VALUE}
+                        isNewProduct={isNewProduct}
+                        onChange={(id) => handleItemChange(idx, 'productId', id)}
+                      />
                       <input
                         type="text"
                         required={isNewProduct}
